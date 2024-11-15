@@ -1,5 +1,9 @@
 v3.3.10 - xx xxx xxxx
 ---------------------
+   - Address prefix tracking is now enabled by default for both IPv4 and IPv6
+     address fields: nw_dst, nw_src, ipv6_dst and ipv6_src.
+     This allows to significantly reduce amount of datapath flows generated
+     from mixed IPv4+IPv6 flow tables.
    - DPDK:
      * OVS validated with DPDK 23.11.7.
 
