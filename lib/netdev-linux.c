@@ -614,7 +614,12 @@ static int
 netdev_linux_netnsid_update(struct netdev_linux *netdev)
 {
     if (netnsid_is_unset(netdev->netnsid)) {
-        if (netdev_get_class(&netdev->up) == &netdev_tap_class) {
+        const char *dpif_type = netdev_get_dpif_type(&netdev->up);
+
+        if (netdev_get_class(&netdev->up) == &netdev_tap_class
+            || (dpif_type && strcmp(dpif_type, "system"))) {
+            /* vport netlink lookup makes no sense for
+             * non-system dpif types, set nsid to local. */
             netnsid_set_local(&netdev->netnsid);
         } else {
             return netdev_linux_netnsid_update__(netdev);
@@ -931,8 +936,36 @@ netdev_linux_update(struct netdev_linux *dev, int nsid,
                     const struct rtnetlink_change *change)
     OVS_REQUIRES(dev->mutex)
 {
-    if (netdev_linux_netnsid_is_eq(dev, nsid)) {
-        netdev_linux_update__(dev, change);
+    const char *dpif_type = netdev_get_dpif_type(&dev->up);
+
+    if (dpif_type && !strcmp(dpif_type, "system")) {
+        if (netdev_linux_netnsid_is_eq(dev, nsid)) {
+            netdev_linux_update__(dev, change);
+        }
+    } else {
+        /* For non-system datapath devices (or devices whose dpif_type
+         * has not been set yet), the nsid is forced to NETNSID_LOCAL
+         * because there is no kernel vport to query.
+         * When NETLINK_LISTEN_ALL_NSID is enabled the kernel tags even
+         * local RTM events with a real namespace id that will never
+         * match NETNSID_LOCAL, so the nsid check cannot be used.
+         *
+         * Instead, filter by ifindex: the event ifindex must match the
+         * locally-determined ifindex for the device.  When the ifindex
+         * is already cached (from a previous local query), use it directly.
+         * Otherwise, fall back to a local if_nametoindex() call, which
+         * always resolves in the current namespace. */
+        int ifindex;
+
+        if (dev->cache_valid & VALID_IFINDEX) {
+            ifindex = dev->ifindex;
+        } else {
+            ifindex = if_nametoindex(netdev_get_name(&dev->up));
+        }
+
+        if (ifindex && ifindex == change->if_index) {
+            netdev_linux_update__(dev, change);
+        }
     }
 }
 
